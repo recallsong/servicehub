@@ -1,0 +1,78 @@
+@url = http://localhost:8080
+
+### hello config message
+GET {{url}}/hello
+
+### hello simple
+POST {{url}}/hello/simple
+
+{"name":"hehe","age": 123}
+
+### hello struct
+POST {{url}}/hello/struct/path_param?Name=query_param
+
+{
+    "name": "body_param",
+    "message": "body message"
+}
+
+### hello struct pointer
+POST {{url}}/hello/struct/ptr
+
+{
+    "name": "body_param",
+    "message": "body message"
+}
+
+### hello bytes
+POST {{url}}/hello/bytes
+Content-Type: application/json
+
+{
+    "message": "heihei"
+}
+
+### hello int
+POST {{url}}/hello/int
+
+12322222
+
+### hello pointer int
+POST {{url}}/hello/int/ptr
+
+12322222
+
+### hello map
+POST {{url}}/hello/map
+Content-Type: application/json
+
+{
+    "message": "heihei"
+}
+
+### hello map pointer
+POST {{url}}/hello/map/ptr
+Content-Type: application/x-www-form-urlencoded
+
+message=heihei
+
+### hello slice
+POST {{url}}/hello/slice
+Content-Type: application/json
+
+[
+    {"name":"hehe"}
+]
+
+### hello context
+POST {{url}}/hello/context
+
+{"name":"hehe"}
+
+### hello response body
+GET {{url}}/hello/response/body
+
+
+
+
+

@@ -1,0 +1,11 @@
+http-server:
+    addr: ":8080"
+    print_routes: true
+    index_show_routes: true
+
+pprof:
+    enable: true
+    addr: ":6580"
+
+hello:
+    message: "hello world"
