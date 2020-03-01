@@ -66,7 +66,7 @@ func (p *provider) Init(ctx servicehub.Context) error {
 			err := fn(ctx)
 			if err != nil {
 				p.logger.Error(err)
-				return nil
+				return err
 			}
 			return nil
 		}

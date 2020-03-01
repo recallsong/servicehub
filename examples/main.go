@@ -108,6 +108,10 @@ func (p *helloProvider) Init(ctx servicehub.Context) error {
 		return http.StatusOK, bytes.NewReader([]byte("hello"))
 	})
 
+	// 处理静态文件
+	routes.Static("/hello/static", "/", httpserver.WithFileSystemPath("./html"))
+	routes.File("/hello/file", "/page.html", httpserver.WithFileSystemPath("./html"))
+
 	return nil
 }
 

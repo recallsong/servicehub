@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"net/http"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/labstack/echo"
+	"github.com/recallsong/go-utils/net/httpx/filesystem"
 )
 
 // Router .
@@ -140,14 +142,14 @@ func processOptions(r *route, opt interface{}) {
 	}
 }
 
-// WithDescription .
+// WithDescription for Router, description for this route
 func WithDescription(desc string) interface{} {
 	return option(func(r *route) {
 		r.desc = desc
 	})
 }
 
-// WithHide .
+// WithHide for Router, not print this route
 func WithHide(hide bool) interface{} {
 	return option(func(r *route) {
 		r.hide = hide
@@ -230,19 +232,60 @@ func (r *router) Any(path string, handler interface{}, options ...interface{}) {
 	r.Add(http.MethodTrace, path, handler, options...)
 }
 
+// WithFileSystem for Static And File
+func WithFileSystem(fs http.FileSystem) interface{} {
+	return fs
+}
+
+type filesystemPath string
+
+// WithFileSystemPath for Static And File
+func WithFileSystemPath(root string) interface{} {
+	return filesystemPath(root)
+}
+
 func (r *router) Static(prefix, root string, options ...interface{}) {
-	r.Add(http.MethodGet, prefix+"/**", nil, options...)
-	r.p.server.Static(prefix, root)
-	r.p.server.File("/", path.Join(prefix, "index.html"))
+	var fs http.FileSystem
+	for _, opt := range options {
+		if files, ok := opt.(http.FileSystem); ok {
+			fs = files
+		} else if path, ok := opt.(filesystemPath); ok {
+			root = filepath.Join(string(path), root)
+		}
+	}
+	p := filepath.Join(prefix, "/**")
+	r.Add(http.MethodGet, p, nil, options...)
+	if fs == nil {
+		r.p.server.Static(prefix, root)
+		r.p.server.File(path.Join(prefix, "index.html"), path.Join(root, "index.html"))
+	} else {
+		fs := filesystem.New(fs).SetRoot(root).SetRoute(prefix)
+		handler := fs.Handler
+		r.p.server.GET(p, func(c echo.Context) error {
+			handler.ServeHTTP(c.Response(), c.Request())
+			return nil
+		})
+	}
 }
 
-func (r *router) File(path, filepath string, options ...interface{}) {
+func (r *router) File(path, file string, options ...interface{}) {
+	var fs http.FileSystem
+	for _, opt := range options {
+		if files, ok := opt.(http.FileSystem); ok {
+			fs = files
+		} else if path, ok := opt.(filesystemPath); ok {
+			file = filepath.Join(string(path), file)
+		}
+	}
 	r.Add(http.MethodGet, path, nil, options...)
-	r.p.server.File(path, filepath)
+	if fs == nil {
+		r.p.server.File(path, file)
+	} else {
+		fs := filesystem.New(fs).SetRoot(file).SetRoute(path)
+		handler := fs.Handler
+		r.p.server.GET(path, func(c echo.Context) error {
+			handler.ServeHTTP(c.Response(), c.Request())
+			return nil
+		})
+	}
 }
-
-// func (r *router) Static(prefix, root string, options ...interface{}) {
-// 	r.Add(http.MethodGet, prefix+"/**", nil, options...)
-// 	r.p.server.Static(prefix, root)
-// 	r.p.server.File("/", path.Join(prefix, "index.html"))
-// }

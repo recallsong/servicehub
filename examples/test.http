@@ -72,6 +72,15 @@ POST {{url}}/hello/context
 ### hello response body
 GET {{url}}/hello/response/body
 
+### hello static
+GET {{url}}/hello/static
+
+### hello static file
+GET {{url}}/hello/static/page.html
+
+### hello file
+GET {{url}}/hello/file
+
 
 
 

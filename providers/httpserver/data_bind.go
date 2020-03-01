@@ -16,9 +16,7 @@ import (
 	"github.com/labstack/echo"
 )
 
-type dataBinder struct {
-	echo.DefaultBinder
-}
+type dataBinder struct{}
 
 // Bind implements the `Binder#Bind` function.
 func (b *dataBinder) Bind(i interface{}, c echo.Context) (err error) {
