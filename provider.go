@@ -38,7 +38,7 @@ var serviceProviders = map[string]ProviderDefine{}
 // RegisterProvider .
 func RegisterProvider(name string, define ProviderDefine) {
 	if _, ok := serviceProviders[name]; ok {
-		fmt.Println("provider %s already exist", name)
+		fmt.Printf("provider %s already exist\n", name)
 		os.Exit(-1)
 	}
 	serviceProviders[name] = define
