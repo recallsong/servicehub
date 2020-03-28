@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 
@@ -81,73 +83,73 @@ func (p *helloProvider) Init(ctx servicehub.Context) error {
 		),
 	)
 
-	// // 请求参数为 结构体指针、返回结构体为 status int, data interface{}, err error
-	// routes.POST("/hello/simple", func(body *struct {
-	// 	Name string `json:"name"`
-	// 	Age  int    `json:"age"`
-	// }) (status int, data interface{}, err error) {
-	// 	return http.StatusCreated, body, nil
-	// })
+	// 请求参数为 结构体指针、返回结构体为 status int, data interface{}, err error
+	routes.POST("/hello/simple", func(body *struct {
+		Name string `json:"name"`
+		Age  int    `json:"age"`
+	}) (status int, data interface{}, err error) {
+		return http.StatusCreated, body, nil
+	})
 
-	// // 请求参数为 结构体，校验 message 字段是否为空
-	// routes.POST("/hello/struct/:name", func(resp http.ResponseWriter, req *http.Request,
-	// 	body struct {
-	// 		Name    string `param:"name"`
-	// 		Message string `json:"message" form:"message" query:"message" validate:"required"`
-	// 	},
-	// ) {
-	// 	resp.Write([]byte(fmt.Sprint(body)))
-	// })
+	// 请求参数为 结构体，校验 message 字段是否为空
+	routes.POST("/hello/struct/:name", func(resp http.ResponseWriter, req *http.Request,
+		body struct {
+			Name    string `param:"name"`
+			Message string `json:"message" form:"message" query:"message" validate:"required"`
+		},
+	) {
+		resp.Write([]byte(fmt.Sprint(body)))
+	})
 
-	// // 请求参数为 结构体
-	// routes.POST("/hello/struct/ptr", func(resp http.ResponseWriter, req *http.Request,
-	// 	body *struct {
-	// 		Name    string `param:"name"`
-	// 		Message string `json:"message" form:"message" query:"message" validate:"required"`
-	// 	},
-	// ) {
-	// 	resp.Write([]byte(fmt.Sprint(body)))
-	// })
+	// 请求参数为 结构体
+	routes.POST("/hello/struct/ptr", func(resp http.ResponseWriter, req *http.Request,
+		body *struct {
+			Name    string `param:"name"`
+			Message string `json:"message" form:"message" query:"message" validate:"required"`
+		},
+	) {
+		resp.Write([]byte(fmt.Sprint(body)))
+	})
 
-	// // 请求参数为 http.ResponseWriter, *http.Request, []byte, []byte 表示请求 Body
-	// routes.Any("/hello/bytes", func(resp http.ResponseWriter, req *http.Request, byts []byte) {
-	// 	resp.Write(byts)
-	// })
+	// 请求参数为 http.ResponseWriter, *http.Request, []byte, []byte 表示请求 Body
+	routes.Any("/hello/bytes", func(resp http.ResponseWriter, req *http.Request, byts []byte) {
+		resp.Write(byts)
+	})
 
-	// // 请求参数 http.ResponseWriter, *http.Request, int
-	// routes.Any("/hello/int", func(resp http.ResponseWriter, req *http.Request, body int) {
-	// 	resp.Write([]byte(fmt.Sprint(body)))
-	// })
-	// routes.Any("/hello/int/ptr", func(resp http.ResponseWriter, req *http.Request, body *int) {
-	// 	resp.Write([]byte(fmt.Sprint(*body)))
-	// })
+	// 请求参数 http.ResponseWriter, *http.Request, int
+	routes.Any("/hello/int", func(resp http.ResponseWriter, req *http.Request, body int) {
+		resp.Write([]byte(fmt.Sprint(body)))
+	})
+	routes.Any("/hello/int/ptr", func(resp http.ResponseWriter, req *http.Request, body *int) {
+		resp.Write([]byte(fmt.Sprint(*body)))
+	})
 
-	// // 请求参数 http.ResponseWriter, *http.Request, map[string]interface{}
-	// routes.Any("/hello/map", func(resp http.ResponseWriter, req *http.Request, body map[string]interface{}) {
-	// 	resp.Write([]byte(fmt.Sprint(body)))
-	// })
-	// routes.Any("/hello/map/ptr", func(resp http.ResponseWriter, req *http.Request, body ******map[string]interface{}) {
-	// 	resp.Write([]byte(fmt.Sprint(*body)))
-	// })
+	// 请求参数 http.ResponseWriter, *http.Request, map[string]interface{}
+	routes.Any("/hello/map", func(resp http.ResponseWriter, req *http.Request, body map[string]interface{}) {
+		resp.Write([]byte(fmt.Sprint(body)))
+	})
+	routes.Any("/hello/map/ptr", func(resp http.ResponseWriter, req *http.Request, body ******map[string]interface{}) {
+		resp.Write([]byte(fmt.Sprint(*body)))
+	})
 
-	// // 请求参数 http.ResponseWriter, *http.Request, []interface{}
-	// routes.Any("/hello/slice", func(resp http.ResponseWriter, req *http.Request, body []interface{}) {
-	// 	resp.Write([]byte(fmt.Sprint(body)))
-	// })
+	// 请求参数 http.ResponseWriter, *http.Request, []interface{}
+	routes.Any("/hello/slice", func(resp http.ResponseWriter, req *http.Request, body []interface{}) {
+		resp.Write([]byte(fmt.Sprint(body)))
+	})
 
-	// // 请求参数 httpserver.Context, string
-	// routes.POST("/hello/context", func(ctx httpserver.Context, body string) {
-	// 	ctx.ResponseWriter().Write([]byte(body))
-	// })
+	// 请求参数 httpserver.Context, string
+	routes.POST("/hello/context", func(ctx httpserver.Context, body string) {
+		ctx.ResponseWriter().Write([]byte(body))
+	})
 
-	// // 返回参数 status int, body io.Reader
-	// routes.GET("/hello/response/body", func(ctx httpserver.Context) (status int, body io.Reader) {
-	// 	return http.StatusOK, bytes.NewReader([]byte("hello"))
-	// })
+	// 返回参数 status int, body io.Reader
+	routes.GET("/hello/response/body", func(ctx httpserver.Context) (status int, body io.Reader) {
+		return http.StatusOK, bytes.NewReader([]byte("hello"))
+	})
 
-	// // 处理静态文件
-	// routes.Static("/hello/static", "/")
-	// routes.File("/hello/file", "/page.html")
+	// 处理静态文件
+	routes.Static("/hello/static", "/")
+	routes.File("/hello/file", "/page.html")
 	return nil
 }
 
