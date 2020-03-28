@@ -27,7 +27,6 @@ type Router interface {
 	Any(path string, handler interface{}, options ...interface{})
 	Static(prefix, root string, options ...interface{})
 	File(path, filepath string, options ...interface{})
-	// StaticFS(prefix string, fs http.FileSystem, options ...interface{})
 
 	Add(method, path string, handler interface{}, options ...interface{})
 }
@@ -97,6 +96,8 @@ type router struct {
 	routeMap     map[routeKey]*route
 	routes       []*route
 	group        string
+	desc         string
+	hide         bool
 	intercepters []Intercepter
 }
 
@@ -122,15 +123,27 @@ func (r *router) Add(method, path string, handler interface{}, options ...interf
 	route := &route{
 		routeKey: &key,
 		group:    r.group,
+		hide:     r.hide,
 	}
+	var intercepters []Intercepter
 	for _, opt := range options {
+		inter, ok := opt.(Intercepter)
+		if ok {
+			intercepters = append(intercepters, inter)
+			continue
+		}
+		inter, ok = opt.(func(handler func(ctx Context) error) func(ctx Context) error)
+		if ok {
+			intercepters = append(intercepters, inter)
+			continue
+		}
 		processOptions(route, opt)
 	}
 	r.routeMap[key] = route
 	r.routes = append(r.routes, route)
 
 	if handler != nil {
-		r.add(method, path, handler)
+		r.add(method, path, handler, intercepters)
 	}
 }
 
@@ -142,18 +155,23 @@ func processOptions(r *route, opt interface{}) {
 	}
 }
 
-// WithDescription for Router, description for this route
+// WithDescription for Route, description for this route
 func WithDescription(desc string) interface{} {
 	return option(func(r *route) {
 		r.desc = desc
 	})
 }
 
-// WithHide for Router, not print this route
+// WithHide for Route, not print this route
 func WithHide(hide bool) interface{} {
 	return option(func(r *route) {
 		r.hide = hide
 	})
+}
+
+// WithIntercepter for Router
+func WithIntercepter(fn func(handler func(ctx Context) error) func(ctx Context) error) interface{} {
+	return Intercepter(fn)
 }
 
 type routesSorter []*route

@@ -8,44 +8,47 @@ import (
 	"github.com/recallsong/servicehub"
 )
 
-// Config .
-type Config struct {
-	Addr string `json:"addr"`
+type config struct {
+	Addr string `file:"addr" flag:"pprof_addr" env:"PPROF_ADDR" default:":6580" desc:"server address to listen"`
 }
 
-// Provider .
-type Provider struct {
-	cfg    Config
-	logger logs.Logger
+type providerDefine struct{}
+
+func (d *providerDefine) Service() []string {
+	return []string{"pprof"}
+}
+
+func (d *providerDefine) Summary() string {
+	return "start pprof http server"
+}
+
+func (d *providerDefine) Description() string {
+	return d.Summary()
+}
+
+func (d *providerDefine) Creator() servicehub.Creator {
+	return newProvider
+}
+
+func (d *providerDefine) Config() interface{} {
+	return &config{}
+}
+
+// provider .
+type provider struct {
+	Cfg    *config
+	Logger logs.Logger
 	server *http.Server
 }
 
 // New .
-func New() servicehub.ServiceProvider {
-	return &Provider{
-		cfg: Config{
-			Addr: ":6580",
-		},
-	}
-}
-
-// Name .
-func (p *Provider) Name() string { return "pprof" }
-
-// Services .
-func (p *Provider) Services() []string { return []string{"pprof"} }
-
-// Config .
-func (p *Provider) Config() interface{} { return &p.cfg }
-
-// SetLogger .
-func (p *Provider) SetLogger(logger logs.Logger) {
-	p.logger = logger
+func newProvider() servicehub.Provider {
+	return &provider{}
 }
 
 // Init .
-func (p *Provider) Init(ctx servicehub.Context) error {
-	server := &http.Server{Addr: p.cfg.Addr}
+func (p *provider) Init(ctx servicehub.Context) error {
+	server := &http.Server{Addr: p.Cfg.Addr}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
@@ -58,8 +61,8 @@ func (p *Provider) Init(ctx servicehub.Context) error {
 }
 
 // Start .
-func (p *Provider) Start() error {
-	p.logger.Infof("starting pprof at %s", p.cfg.Addr)
+func (p *provider) Start() error {
+	p.Logger.Infof("starting pprof at %s", p.Cfg.Addr)
 	err := p.server.ListenAndServe()
 	if err != nil && err != http.ErrServerClosed {
 		return err
@@ -68,7 +71,7 @@ func (p *Provider) Start() error {
 }
 
 // Close .
-func (p *Provider) Close() error {
+func (p *provider) Close() error {
 	if p.server == nil {
 		return nil
 	}
@@ -80,5 +83,5 @@ func (p *Provider) Close() error {
 }
 
 func init() {
-	servicehub.RegisterProvider("pprof", New)
+	servicehub.RegisterProvider("pprof", &providerDefine{})
 }

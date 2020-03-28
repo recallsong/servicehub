@@ -11,46 +11,48 @@ import (
 
 // config .
 type config struct {
-	Addr            string `json:"addr"`
-	PrintRoutes     bool   `json:"print_routes"`
-	IndexShowRoutes bool   `json:"index_show_routes"`
+	Addr        string `file:"addr" flag:"http_addr" env:"HTTP_ADDR" default:":8080" desc:"http address to listen"`
+	PrintRoutes bool   `file:"print_routes" flag:"print_routes" env:"HTTP_PRINT_ROUTES" default:"true" desc:"print http routes"`
+	// IndexShowRoutes bool   `file:"index_show_routes"` TODO .
+}
+
+type providerDefine struct{}
+
+func (d *providerDefine) Service() []string {
+	return []string{"http-server", "api-server"}
+}
+
+func (d *providerDefine) Summary() string {
+	return "http server"
+}
+
+func (d *providerDefine) Description() string {
+	return d.Summary()
+}
+
+func (d *providerDefine) Creator() servicehub.Creator {
+	return newProvider
+}
+
+func (d *providerDefine) Config() interface{} {
+	return &config{}
 }
 
 type provider struct {
-	cfg    config
-	logger logs.Logger
+	Cfg    *config
+	Logger logs.Logger
 	server *echo.Echo
 	router *router
 }
 
-func newProvider() servicehub.ServiceProvider {
+func newProvider() servicehub.Provider {
 	p := &provider{
-		cfg: config{
-			Addr:        ":8080",
-			PrintRoutes: true,
-		},
 		router: &router{
 			routeMap: make(map[routeKey]*route),
 		},
 	}
 	p.router.p = p
 	return p
-}
-
-// Name .
-func (p *provider) Name() string { return "http-server" }
-
-// Services .
-func (p *provider) Services() []string {
-	return []string{"http-server", "api-server"}
-}
-
-// config .
-func (p *provider) Config() interface{} { return &p.cfg }
-
-// SetLogger .
-func (p *provider) SetLogger(logger logs.Logger) {
-	p.logger = logger
 }
 
 // Init .
@@ -65,7 +67,7 @@ func (p *provider) Init(ctx servicehub.Context) error {
 			ctx = &context{Context: ctx}
 			err := fn(ctx)
 			if err != nil {
-				p.logger.Error(err)
+				p.Logger.Error(err)
 				return err
 			}
 			return nil
@@ -76,18 +78,18 @@ func (p *provider) Init(ctx servicehub.Context) error {
 
 // Start .
 func (p *provider) Start() error {
-	if p.cfg.PrintRoutes || p.cfg.IndexShowRoutes {
+	if p.Cfg.PrintRoutes /*|| p.Cfg.IndexShowRoutes*/ {
 		p.router.Normalize()
 	}
-	if p.cfg.PrintRoutes {
+	if p.Cfg.PrintRoutes {
 		for _, route := range p.router.routes {
 			if !route.hide {
-				p.logger.Infof("--> %s", route.String())
+				p.Logger.Infof("--> %s", route.String())
 			}
 		}
 	}
-	p.logger.Infof("starting http server at %s", p.cfg.Addr)
-	err := p.server.Start(p.cfg.Addr)
+	p.Logger.Infof("starting http server at %s", p.Cfg.Addr)
+	err := p.server.Start(p.Cfg.Addr)
 	if err != nil && err != http.ErrServerClosed {
 		return err
 	}
@@ -130,5 +132,5 @@ func (p *provider) Provide(name string, args ...interface{}) interface{} {
 }
 
 func init() {
-	servicehub.RegisterProvider("http-server", newProvider)
+	servicehub.RegisterProvider("http-server", &providerDefine{})
 }

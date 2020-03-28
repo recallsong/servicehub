@@ -1,44 +1,25 @@
 package servicehub
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/recallsong/go-utils/logs"
 )
 
-// Context .
-type Context interface {
-	Hub() *Hub
-	Config() interface{}
-	Logger() logs.Logger
-	Provider(name string, options ...interface{}) interface{}
-}
-
 // Creator .
-type Creator func() ServiceProvider
+type Creator func() Provider
 
-// ServiceProviders .
-var ServiceProviders = map[string]Creator{}
-
-// RegisterProvider .
-func RegisterProvider(name string, creator Creator) {
-	ServiceProviders[name] = creator
+// ProviderDefine .
+type ProviderDefine interface {
+	Service() []string
+	Creator() Creator
 }
 
-// ServiceProvider .
-type ServiceProvider interface {
-	Name() string
-	Services() []string
-	Start() error
-	Close() error
-}
-
-// ServiceConfigurator .
-type ServiceConfigurator interface {
-	Config() interface{}
-}
-
-// ServiceInitializer .
-type ServiceInitializer interface {
-	Init(ctx Context) error
+// ProviderUsage .
+type ProviderUsage interface {
+	Summary() string
+	Description() string
 }
 
 // ServiceDependencies .
@@ -46,9 +27,40 @@ type ServiceDependencies interface {
 	Dependencies() []string
 }
 
-// ServiceLogger .
-type ServiceLogger interface {
-	SetLogger(logger logs.Logger)
+// ConfigCreator .
+type ConfigCreator interface {
+	Config() interface{}
+}
+
+// serviceProviders .
+var serviceProviders = map[string]ProviderDefine{}
+
+// RegisterProvider .
+func RegisterProvider(name string, define ProviderDefine) {
+	if _, ok := serviceProviders[name]; ok {
+		fmt.Println("provider %s already exist", name)
+		os.Exit(-1)
+	}
+	serviceProviders[name] = define
+}
+
+// Provider .
+type Provider interface {
+	Start() error
+	Close() error
+}
+
+// Context .
+type Context interface {
+	Hub() *Hub
+	Config() interface{}
+	Logger() logs.Logger
+	Service(name string, options ...interface{}) interface{}
+}
+
+// ProviderInitializer .
+type ProviderInitializer interface {
+	Init(ctx Context) error
 }
 
 // DependencyProvider .

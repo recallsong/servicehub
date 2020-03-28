@@ -6,53 +6,74 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/mitchellh/mapstructure"
-	"github.com/spf13/viper"
+	"github.com/recallsong/go-utils/config"
 )
 
-// GetViper .
-func GetViper(name string, paths ...string) *viper.Viper {
-	v := viper.GetViper()
-	v.SetConfigName(name)
-	for _, path := range paths {
-		v.AddConfigPath(path)
-	}
-	if err := v.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			fmt.Println("config not fount")
-		} else {
-			fmt.Println("fail to read config ", err)
+func (h *Hub) loadConfigWithArgs(file string, args ...string) (map[string]interface{}, error) {
+	cfg := make(map[string]interface{})
+	if len(args) > 0 {
+		args = args[1:]
+		var idx int
+		var arg string
+		for idx, arg = range args {
+			if !strings.HasPrefix(arg, "-") {
+				cfg[arg] = nil
+			} else {
+				break
+			}
 		}
-		os.Exit(1)
+		args, num, idx := args[idx:], len(args[idx:]), 0
+		for ; idx < num; idx++ {
+			arg := args[idx]
+			if strings.HasPrefix(arg, "-") {
+				if arg == "-c" || arg == "--config" || arg == "-config" {
+					idx++
+					if idx < len(args) && len(args[idx]) > 0 {
+						file = args[idx]
+					}
+				} else if strings.HasPrefix(arg, "-c=") {
+					arg = arg[len("-c="):]
+					if len(arg) > 0 {
+						file = arg
+					}
+				} else if strings.HasPrefix(arg, "--config=") {
+					arg = arg[len("--config="):]
+					if len(arg) > 0 {
+						file = arg
+					}
+				} else if strings.HasPrefix(arg, "-config=") {
+					arg = arg[len("-config="):]
+					if len(arg) > 0 {
+						file = arg
+					}
+				}
+			}
+		}
 	}
-	fmt.Println("using config file:", v.ConfigFileUsed())
-	return v
-}
-
-func unmarshalConfig(input, output interface{}) error {
-	decoder, err := mapstructure.NewDecoder(&mapstructure.DecoderConfig{
-		Metadata:         nil,
-		Result:           output,
-		WeaklyTypedInput: true,
-		TagName:          "json",
-		DecodeHook: mapstructure.ComposeDecodeHookFunc(
-			mapstructure.StringToTimeDurationHookFunc(),
-			mapstructure.StringToSliceHookFunc(","),
-		),
-	})
+	err := config.LoadToMap(file, cfg)
 	if err != nil {
-		return err
+		if os.IsNotExist(err) {
+			if len(cfg) <= 0 {
+				h.logger.Warnf("config file %s not exist", file)
+			} else {
+				h.logger.Debugf("config file %s not exist", file)
+			}
+			return cfg, nil
+		}
+		h.logger.Errorf("fail to load config: %s", err)
+		return nil, err
 	}
-	return decoder.Decode(input)
+	h.logger.Debugf("using config file:", file)
+	return cfg, nil
 }
 
-func (h *Hub) loadProviders(viper *viper.Viper) error {
+func (h *Hub) loadProviders(config map[string]interface{}) error {
 	h.providersMap = map[string][]*providerContext{}
-	err := h.doLoadProviders(viper, "providers")
+	err := h.doLoadProviders(config, "providers")
 	if err != nil {
 		return err
 	}
-	list := viper.Get("providers")
+	list := config["providers"]
 	if list != nil {
 		switch providers := list.(type) {
 		case []interface{}:
@@ -67,7 +88,7 @@ func (h *Hub) loadProviders(viper *viper.Viper) error {
 				}
 			}
 		case map[string]interface{}:
-			err = h.doLoadProviders(viper.Sub("providers"), "")
+			err = h.doLoadProviders(providers, "")
 			if err != nil {
 				return err
 			}
@@ -76,9 +97,8 @@ func (h *Hub) loadProviders(viper *viper.Viper) error {
 	return nil
 }
 
-func (h *Hub) doLoadProviders(viper *viper.Viper, filter string) error {
-	keys := viper.AllSettings()
-	for key, cfg := range keys {
+func (h *Hub) doLoadProviders(config map[string]interface{}, filter string) error {
+	for key, cfg := range config {
 		key = strings.ReplaceAll(key, "_", "-")
 		if key == filter {
 			continue
@@ -107,14 +127,14 @@ func (h *Hub) addProvider(key string, cfg interface{}) error {
 			}
 		}
 	}
-	if name == "" {
+	if len(name) <= 0 {
 		return fmt.Errorf("provider name must not be empty")
 	}
-	creator, ok := ServiceProviders[name]
+	define, ok := serviceProviders[name]
 	if !ok {
 		return fmt.Errorf("provider %s not exist", name)
 	}
-	provider := creator()
-	h.providersMap[name] = append(h.providersMap[name], &providerContext{h, key, cfg, provider})
+	provider := define.Creator()()
+	h.providersMap[name] = append(h.providersMap[name], &providerContext{h, key, name, cfg, provider, define})
 	return nil
 }

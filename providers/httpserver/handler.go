@@ -15,7 +15,7 @@ import (
 	"github.com/recallsong/go-utils/reflectx"
 )
 
-func (r *router) add(method, path string, handler interface{}) {
+func (r *router) add(method, path string, handler interface{}, inters []Intercepter) {
 	var echoHandler echo.HandlerFunc
 	switch fn := handler.(type) {
 	case echo.HandlerFunc:
@@ -53,14 +53,15 @@ func (r *router) add(method, path string, handler interface{}) {
 			panic(fmt.Errorf("%s %s: not support http server handler type: %v", method, path, handler))
 		}
 	}
-	if len(r.intercepters) > 0 {
+	inters = append(r.intercepters[0:len(r.intercepters):len(r.intercepters)], inters...)
+	if len(inters) > 0 {
 		originalHandler := echoHandler
 		handler := func(ctx Context) error {
 			c := ctx.(*context)
 			return originalHandler(c)
 		}
-		for i := len(r.intercepters) - 1; i >= 0; i-- {
-			handler = r.intercepters[i](handler)
+		for i := len(inters) - 1; i >= 0; i-- {
+			handler = inters[i](handler)
 		}
 		echoHandler = func(ctx echo.Context) error {
 			c := ctx.(*context)
