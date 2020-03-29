@@ -45,10 +45,7 @@ func RegisterProvider(name string, define ProviderDefine) {
 }
 
 // Provider .
-type Provider interface {
-	Start() error
-	Close() error
-}
+type Provider interface{}
 
 // Context .
 type Context interface {
@@ -56,6 +53,12 @@ type Context interface {
 	Config() interface{}
 	Logger() logs.Logger
 	Service(name string, options ...interface{}) interface{}
+}
+
+// ProviderRunner .
+type ProviderRunner interface {
+	Start() error
+	Close() error
 }
 
 // ProviderInitializer .

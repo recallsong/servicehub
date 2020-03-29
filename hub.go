@@ -180,23 +180,27 @@ func (h *Hub) StartWithSignal() error {
 // Start .
 func (h *Hub) Start(closer ...<-chan os.Signal) (err error) {
 	h.lock.Lock()
-	num := len(h.providers)
-	ch := make(chan error, num)
-	h.wg.Add(num)
+	ch := make(chan error, len(h.providers))
+	var num int
 	for _, item := range h.providers {
-		go func(key, name string, provider Provider) {
-			err := provider.Start()
-			if key != name {
-				key = fmt.Sprintf("%s (%s)", key, name)
-			}
-			if err != nil {
-				h.logger.Errorf("fail to exit provider %s: %s", key, err)
-			} else {
-				h.logger.Infof("provider %s exit", key)
-			}
-			h.wg.Done()
-			ch <- err
-		}(item.key, item.name, item.provider)
+		if runner, ok := item.provider.(ProviderRunner); ok {
+			num++
+			h.wg.Add(1)
+			go func(key, name string, provider ProviderRunner) {
+				if key != name {
+					key = fmt.Sprintf("%s (%s)", key, name)
+				}
+				h.logger.Debugf("provider %s starting ...", key)
+				err := provider.Start()
+				if err != nil {
+					h.logger.Errorf("fail to exit provider %s: %s", key, err)
+				} else {
+					h.logger.Infof("provider %s exit", key)
+				}
+				h.wg.Done()
+				ch <- err
+			}(item.key, item.name, runner)
+		}
 	}
 	h.started = true
 	h.lock.Unlock()
@@ -246,9 +250,11 @@ func (h *Hub) Close() error {
 	}
 	var errs errorx.Errors
 	for i := len(h.providers) - 1; i >= 0; i-- {
-		err := h.providers[i].provider.Close()
-		if err != nil {
-			errs = append(errs, err)
+		if runner, ok := h.providers[i].provider.(ProviderRunner); ok {
+			err := runner.Close()
+			if err != nil {
+				errs = append(errs, err)
+			}
 		}
 	}
 	h.wg.Wait()
@@ -302,8 +308,15 @@ func (c *providerContext) Init() (err error) {
 			value = value.Elem()
 			typ = value.Type()
 		}
-		cfgValue := reflect.ValueOf(c.cfg)
-		cfgType := cfgValue.Type()
+		var (
+			cfgValue *reflect.Value
+			cfgType  reflect.Type
+		)
+		if c.cfg != nil {
+			value := reflect.ValueOf(c.cfg)
+			cfgValue = &value
+			cfgType = cfgValue.Type()
+		}
 		if typ.Kind() == reflect.Struct {
 			fields := typ.NumField()
 			for i := 0; i < fields; i++ {
@@ -312,8 +325,8 @@ func (c *providerContext) Init() (err error) {
 					logger := c.Logger()
 					value.Field(i).Set(reflect.ValueOf(logger))
 				}
-				if c.cfg != nil && field.Type == cfgType {
-					value.Field(i).Set(cfgValue)
+				if cfgValue != nil && field.Type == cfgType {
+					value.Field(i).Set(*cfgValue)
 				}
 			}
 		}
