@@ -140,7 +140,7 @@ func (h *Hub) resolveDependency(providersMap map[string][]*providerContext) (gra
 		depends := p[0].Dependencies()
 		providers := map[string]*providerContext{}
 		for _, service := range depends {
-			if deps, ok := services[service]; ok || len(deps) <= 0 {
+			if deps, ok := services[service]; ok && len(deps) > 0 {
 				if len(deps) > 1 {
 					return nil, fmt.Errorf("provider %s ambiguity for service %s", deps[0].name, service)
 				}
