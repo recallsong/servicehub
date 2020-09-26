@@ -16,9 +16,13 @@ type ProviderDefine interface {
 	Creator() Creator
 }
 
+// ProviderUsageSummary .
+type ProviderUsageSummary interface {
+	Summary() string
+}
+
 // ProviderUsage .
 type ProviderUsage interface {
-	Summary() string
 	Description() string
 }
 

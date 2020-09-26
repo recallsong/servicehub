@@ -63,7 +63,7 @@ func (h *Hub) loadConfigWithArgs(file string, args ...string) (map[string]interf
 		h.logger.Errorf("fail to load config: %s", err)
 		return nil, err
 	}
-	h.logger.Debugf("using config file:", file)
+	h.logger.Debugf("using config file: %s", file)
 	return cfg, nil
 }
 
@@ -113,14 +113,18 @@ func (h *Hub) doLoadProviders(config map[string]interface{}, filter string) erro
 
 func (h *Hub) addProvider(key string, cfg interface{}) error {
 	name := key
+	idx := strings.Index(key, "@")
+	if idx > 0 {
+		name = key[0:idx]
+	}
 	if cfg != nil {
 		if v, ok := cfg.(map[string]interface{}); ok {
-			if val, ok := v["name"]; ok {
+			if val, ok := v["_name"]; ok {
 				if n, ok := val.(string); ok {
 					name = n
 				}
 			}
-			if val, ok := v["enable"]; ok {
+			if val, ok := v["_enable"]; ok {
 				if enable, ok := val.(bool); ok && !enable {
 					return nil
 				}

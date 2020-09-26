@@ -11,9 +11,10 @@ import (
 	"time"
 
 	"github.com/recallsong/go-utils/config"
+	"github.com/recallsong/go-utils/encoding/jsonx"
 	"github.com/recallsong/go-utils/errorx"
 	"github.com/recallsong/go-utils/logs"
-	"github.com/recallsong/go-utils/logs/stdout"
+	"github.com/recallsong/go-utils/logs/golog"
 	"github.com/recallsong/go-utils/os/signalx"
 	graph "github.com/recallsong/servicehub/dependency-graph"
 	"github.com/recallsong/unmarshal"
@@ -32,9 +33,7 @@ type Hub struct {
 	started bool
 	wg      sync.WaitGroup
 
-	// options
-	requires   []string
-	autoCreate bool
+	listeners []Listener
 }
 
 // New .
@@ -44,7 +43,7 @@ func New(options ...interface{}) *Hub {
 		processOptions(hub, opt)
 	}
 	if hub.logger == nil {
-		hub.logger = &stdout.Stdout{}
+		hub.logger = golog.New()
 	}
 	return hub
 }
@@ -52,35 +51,27 @@ func New(options ...interface{}) *Hub {
 // Init .
 func (h *Hub) Init(config map[string]interface{}, flags *pflag.FlagSet, args []string) (err error) {
 	defer func() {
-		exp := recover()
-		if exp != nil {
-			if e, ok := exp.(error); ok {
-				err = e
-			} else {
-				err = fmt.Errorf("%v", exp)
-			}
-		}
+		// exp := recover()
+		// if exp != nil {
+		// 	if e, ok := exp.(error); ok {
+		// 		err = e
+		// 	} else {
+		// 		err = fmt.Errorf("%v", exp)
+		// 	}
+		// }
 		if err != nil {
 			h.logger.Errorf("fail to init service hub: %s", err)
 		}
 	}()
-
+	for i, l := 0, len(h.listeners); i < l; i++ {
+		err = h.listeners[i].BeforeInitialization(h, config)
+		if err != nil {
+			return err
+		}
+	}
 	err = h.loadProviders(config)
 	if err != nil {
 		return err
-	}
-
-	// check requires
-	for _, item := range h.requires {
-		if _, ok := h.providersMap[item]; !ok {
-			if !h.autoCreate {
-				return fmt.Errorf("provider %s is required", item)
-			}
-			err = h.addProvider(item, nil)
-			if err != nil {
-				return err
-			}
-		}
 	}
 
 	depGraph, err := h.resolveDependency(h.providersMap)
@@ -120,6 +111,12 @@ func (h *Hub) Init(config map[string]interface{}, flags *pflag.FlagSet, args []s
 			h.logger.Infof("provider %s initialized", ctx.name)
 		}
 	}
+	for i, l := 0, len(h.listeners); i < l; i++ {
+		err = h.listeners[i].AfterInitialization(h)
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -139,15 +136,29 @@ func (h *Hub) resolveDependency(providersMap map[string][]*providerContext) (gra
 	for name, p := range providersMap {
 		depends := p[0].Dependencies()
 		providers := map[string]*providerContext{}
+	loop:
 		for _, service := range depends {
-			if deps, ok := services[service]; ok && len(deps) > 0 {
-				if len(deps) > 1 {
-					return nil, fmt.Errorf("provider %s ambiguity for service %s", deps[0].name, service)
-				}
-				providers[deps[0].name] = deps[0]
-			} else {
-				return nil, fmt.Errorf("miss provider of service %s", service)
+			name := service
+			var key string
+			idx := strings.Index(service, "@")
+			if idx > 0 {
+				key = service
+				name = service[0:idx]
 			}
+			if deps, ok := services[name]; ok {
+				if len(key) > 0 {
+					for _, dep := range deps {
+						if dep.key == key {
+							providers[dep.name] = dep
+							continue loop
+						}
+					}
+				} else if len(deps) > 0 {
+					providers[deps[0].name] = deps[0]
+					continue loop
+				}
+			}
+			return nil, fmt.Errorf("miss provider of service %s", service)
 		}
 		node := graph.NewNode(name)
 		for dep := range providers {
@@ -162,9 +173,7 @@ func (h *Hub) resolveDependency(providersMap map[string][]*providerContext) (gra
 	}
 	var providers []*providerContext
 	for _, node := range resolved {
-		for _, provider := range providersMap[node.Name] {
-			providers = append(providers, provider)
-		}
+		providers = append(providers, providersMap[node.Name]...)
 	}
 	h.providers = providers
 	return resolved, nil
@@ -216,7 +225,7 @@ func (h *Hub) Start(closer ...<-chan os.Signal) (err error) {
 					wait <- h.Close()
 				}()
 				select {
-				case <-time.After(10 * time.Second):
+				case <-time.After(30 * time.Second):
 					h.logger.Errorf("exit service manager timeout !")
 					os.Exit(1)
 				case err := <-wait:
@@ -331,6 +340,16 @@ func (c *providerContext) Init() (err error) {
 			}
 		}
 	}
+	if c.cfg != nil {
+		key := c.key
+		if key != c.name {
+			key = fmt.Sprintf("%s (%s)", key, c.name)
+		}
+		if os.Getenv("LOG_LEVEL") == "debug" {
+			fmt.Printf("provider %s config: \n%s\n", key, jsonx.MarshalAndIndent(c.cfg))
+		}
+		// c.hub.logger.Debugf("provider %s config: \n%s", key, jsonx.MarshalAndIntend(c.cfg))
+	}
 
 	if initializer, ok := c.provider.(ProviderInitializer); ok {
 		err = initializer.Init(c)
@@ -374,11 +393,49 @@ func (c *providerContext) Config() interface{} {
 
 // Provider .
 func (c *providerContext) Service(name string, options ...interface{}) interface{} {
-	if providers, ok := c.hub.servicesMap[name]; ok {
+	return c.hub.getService(c.name, name, options...)
+}
+
+// Service .
+func (h *Hub) Service(name string, options ...interface{}) interface{} {
+	return h.getService("", name, options...)
+}
+
+// Service .
+func (h *Hub) getService(operator, name string, options ...interface{}) interface{} {
+	var key string
+	idx := strings.Index(name, "@")
+	if idx > 0 {
+		key = name
+		name = name[0:idx]
+	}
+	if providers, ok := h.servicesMap[name]; ok {
 		if len(providers) > 0 {
-			provider := providers[0].provider
+			var pc *providerContext
+			if len(key) > 0 {
+				for _, item := range providers {
+					if item.key == key {
+						pc = item
+						break
+					}
+				}
+			} else {
+				for _, item := range providers {
+					if item.key == item.name {
+						pc = item
+						break
+					}
+				}
+				if pc == nil && len(providers) > 0 {
+					pc = providers[0]
+				}
+			}
+			if pc == nil {
+				return nil
+			}
+			provider := pc.provider
 			if prod, ok := provider.(DependencyProvider); ok {
-				return prod.Provide(c.name, options...)
+				return prod.Provide(operator, options...)
 			}
 			return provider
 		}
@@ -388,6 +445,16 @@ func (c *providerContext) Service(name string, options ...interface{}) interface
 
 // Run .
 func (h *Hub) Run(name string, args ...string) {
+	h.RunWithDefault(name, "", nil, args...)
+}
+
+// RunWithFile .
+func (h *Hub) RunWithFile(name, cfgfile string, args ...string) {
+	h.RunWithDefault(name, cfgfile, nil, args...)
+}
+
+// RunWithDefault .
+func (h *Hub) RunWithDefault(name, cfgfile string, defcfg map[string]interface{}, args ...string) {
 	if len(name) <= 0 {
 		name = getAppName(args...)
 	}
@@ -400,10 +467,19 @@ func (h *Hub) Run(name string, args ...string) {
 		}
 	}()
 
-	cfgfile := name + ".yaml"
+	if len(cfgfile) <= 0 {
+		cfgfile = name + ".yaml"
+	}
 	cfg, err := h.loadConfigWithArgs(cfgfile, args...)
 	if err != nil {
 		return
+	}
+	if defcfg != nil {
+		for k, v := range defcfg {
+			if _, ok := cfg[k]; !ok {
+				cfg[k] = v
+			}
+		}
 	}
 
 	flags := pflag.NewFlagSet(name, pflag.ExitOnError)

@@ -1,8 +1,2 @@
-http-server:
-    addr: ":8080"
-
-pprof:
-    addr: ":6580"
-
 hello:
     message: "hello world"

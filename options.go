@@ -11,17 +11,22 @@ func processOptions(hub *Hub, opt interface{}) {
 	}
 }
 
-// WithRequiredServices .
-func WithRequiredServices(autoCreate bool, services ...string) interface{} {
-	return Option(func(hub *Hub) {
-		hub.requires = services
-		hub.autoCreate = autoCreate
-	})
-}
-
 // WithLogger .
 func WithLogger(logger logs.Logger) interface{} {
 	return Option(func(hub *Hub) {
 		hub.logger = logger
+	})
+}
+
+// Listener .
+type Listener interface {
+	BeforeInitialization(h *Hub, config map[string]interface{}) error
+	AfterInitialization(h *Hub) error
+}
+
+// WithListener .
+func WithListener(l Listener) interface{} {
+	return Option(func(hub *Hub) {
+		hub.listeners = append(hub.listeners, l)
 	})
 }
