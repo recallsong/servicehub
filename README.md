@@ -8,9 +8,6 @@
 ## 例子
 配置文件 *examples.yaml*
 ```yaml
-http-server:
-    addr: ":8080"
-
 hello:
     message: "hello world"
 ```
@@ -20,6 +17,7 @@ package main
 
 import (
     "os"
+    "time"
 
     "github.com/recallsong/go-utils/logs"
     "github.com/recallsong/servicehub"
@@ -37,7 +35,7 @@ type config struct {
 type define struct{}
 
 func (d *define) Service() []string      { return []string{"hello"} }
-func (d *define) Dependencies() []string { return []string{"http-server"} }
+func (d *define) Dependencies() []string { return []string{} }
 func (d *define) Description() string    { return "hello for example" }
 func (d *define) Config() interface{}    { return &config{} }
 func (d *define) Creator() servicehub.Creator {
@@ -47,22 +45,33 @@ func (d *define) Creator() servicehub.Creator {
 }
 
 type provider struct {
-    C *config
-    L logs.Logger
+    C       *config
+    L       logs.Logger
+    closeCh chan struct{}
 }
 
 func (p *provider) Init(ctx servicehub.Context) error {
-    p.L.Info("message: ", C.Message)
+    p.L.Info("message: ", p.C.Message)
+    p.closeCh = make(chan struct{})
     return nil
 }
 
 func (p *provider) Start() error {
     p.L.Info("now hello provider is running...")
-    return nil
+    tick := time.Tick(10 * time.Second)
+    for {
+        select {
+        case <-tick:
+            p.L.Info("do something...")
+        case <-p.closeCh:
+            return nil
+        }
+    }
 }
 
 func (p *provider) Close() error {
     p.L.Info("now hello provider is closing...")
+    close(p.closeCh)
     return nil
 }
 
