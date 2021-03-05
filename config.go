@@ -50,6 +50,9 @@ func (h *Hub) loadConfigWithArgs(file string, args ...string) (map[string]interf
 			}
 		}
 	}
+	if len(file) <= 0 {
+		return cfg, nil
+	}
 	err := config.LoadToMap(file, cfg)
 	if err != nil {
 		if os.IsNotExist(err) {

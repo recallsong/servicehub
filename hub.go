@@ -348,7 +348,7 @@ func (c *providerContext) Init() (err error) {
 		if os.Getenv("LOG_LEVEL") == "debug" {
 			fmt.Printf("provider %s config: \n%s\n", key, jsonx.MarshalAndIndent(c.cfg))
 		}
-		// c.hub.logger.Debugf("provider %s config: \n%s", key, jsonx.MarshalAndIntend(c.cfg))
+		// c.hub.logger.Debugf("provider %s config: \n%s", key, jsonx.MarshalAndIndent(c.cfg))
 	}
 
 	if initializer, ok := c.provider.(ProviderInitializer); ok {
@@ -444,12 +444,7 @@ func (h *Hub) getService(operator, name string, options ...interface{}) interfac
 }
 
 // Run .
-func (h *Hub) Run(name string, args ...string) {
-	h.RunWithDefault(name, "", nil, args...)
-}
-
-// RunWithFile .
-func (h *Hub) RunWithFile(name, cfgfile string, args ...string) {
+func (h *Hub) Run(name, cfgfile string, args ...string) {
 	h.RunWithDefault(name, cfgfile, nil, args...)
 }
 
@@ -467,7 +462,7 @@ func (h *Hub) RunWithDefault(name, cfgfile string, defcfg map[string]interface{}
 		}
 	}()
 
-	if len(cfgfile) <= 0 {
+	if len(cfgfile) <= 0 && len(defcfg) <= 0 {
 		cfgfile = name + ".yaml"
 	}
 	cfg, err := h.loadConfigWithArgs(cfgfile, args...)
