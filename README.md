@@ -1,100 +1,128 @@
 # servicehub
-服务管理器 *servicehub.Hub*，管理服务的启动、初始化、依赖关系、关闭等
 
-实现 *servicehub.Provider* 接口来提供服务。
+The *servicehub.Hub* is Service Manager, which manages the startup, initialization, dependency, and shutdown of services.
 
-*github.com/recallsong/servicehub-providers* 里已经提供了一些比较有用的 Provider，可直接拿来使用。
+Provider provide one or more services, and implement the *servicehub.Provider* interface to provide services.
 
-## 例子
-配置文件 *examples.yaml*
+The *servicehub.Hub* manages all providers registered by function *servicehub.RegisterProvider* .
+
+## Example
+The configuration file *examples.yaml*
 ```yaml
 hello:
     message: "hello world"
+    sub:
+        name: "recallsong"
 ```
-*main.go*
+
+The code file *main.go*
 ```go
 package main
 
 import (
-    "os"
-    "time"
+	"os"
+	"time"
 
-    "github.com/recallsong/go-utils/logs"
-    "github.com/recallsong/servicehub"
+	"github.com/recallsong/go-utils/logs"
+	"github.com/recallsong/servicehub"
 )
 
-type subConfig struct {
-    Name string `file:"name" flag:"hello_name" default:"recallsong" desc:"name to show"`
+// define Represents the definition of provider and provides some information
+type define struct{}
+
+// Declare what services the provider provides
+func (d *define) Service() []string { return []string{"hello"} }
+
+// Declare which services the provider depends on
+func (d *define) Dependencies() []string { return []string{} }
+
+// Describe information about this provider
+func (d *define) Description() string { return "hello for example" }
+
+// Return an instance representing the configuration
+func (d *define) Config() interface{} { return &config{} }
+
+// Return a provider creator
+func (d *define) Creator() servicehub.Creator {
+	return func() servicehub.Provider {
+		return &provider{}
+	}
 }
 
 type config struct {
-    Message   string    `file:"message" flag:"msg" default:"hi" desc:"message to show"`
-    SubConfig subConfig `file:"sub"`
+	Message   string    `file:"message" flag:"msg" default:"hi" desc:"message to show"`
+	SubConfig subConfig `file:"sub"`
 }
 
-type define struct{}
-
-func (d *define) Service() []string      { return []string{"hello"} }
-func (d *define) Dependencies() []string { return []string{} }
-func (d *define) Description() string    { return "hello for example" }
-func (d *define) Config() interface{}    { return &config{} }
-func (d *define) Creator() servicehub.Creator {
-    return func() servicehub.Provider {
-        return &provider{}
-    }
+type subConfig struct {
+	Name string `file:"name" flag:"hello_name" default:"recallsong" desc:"name to show"`
 }
 
 type provider struct {
-    C       *config
-    L       logs.Logger
-    closeCh chan struct{}
+	C       *config
+	L       logs.Logger
+	closeCh chan struct{}
 }
 
 func (p *provider) Init(ctx servicehub.Context) error {
-    p.L.Info("message: ", p.C.Message)
-    p.closeCh = make(chan struct{})
-    return nil
+	p.L.Info("message: ", p.C.Message)
+	p.closeCh = make(chan struct{})
+	return nil
 }
 
 func (p *provider) Start() error {
-    p.L.Info("now hello provider is running...")
-    tick := time.Tick(10 * time.Second)
-    for {
-        select {
-        case <-tick:
-            p.L.Info("do something...")
-        case <-p.closeCh:
-            return nil
-        }
-    }
+	p.L.Info("now hello provider is running...")
+	tick := time.Tick(10 * time.Second)
+	for {
+		select {
+		case <-tick:
+			p.L.Info("do something...")
+		case <-p.closeCh:
+			return nil
+		}
+	}
 }
 
 func (p *provider) Close() error {
-    p.L.Info("now hello provider is closing...")
-    close(p.closeCh)
-    return nil
+	p.L.Info("now hello provider is closing...")
+	close(p.closeCh)
+	return nil
 }
 
 func init() {
-    servicehub.RegisterProvider("hello", &define{})
+	servicehub.RegisterProvider("hello", &define{})
 }
 
 func main() {
-    hub := servicehub.New()
-    hub.Run("examples", os.Args...)
+	hub := servicehub.New()
+	hub.Run("examples", "", os.Args...)
 }
 ```
-[例子详情](./examples/main.go)
+[Example details](./examples/main.go)
 
-## 配置读取
-支持以下方式获取配置，读取优先级由低到高分别为：
+Output:
+```sh
+➜  examples git:(master) ✗ go run main.go
+INFO[2021-03-08 19:04:09.493] message: hello world                          module=hello
+INFO[2021-03-08 19:04:09.493] provider hello initialized                   
+INFO[2021-03-08 19:04:09.493] signals to quit:[hangup interrupt terminated quit] 
+INFO[2021-03-08 19:04:09.493] now hello provider is running...              module=hello
+INFO[2021-03-08 19:04:19.496] do something...                               module=hello
+INFO[2021-03-08 19:04:29.497] do something...                               module=hello
+^C
+INFO[2021-03-08 19:04:32.984] now hello provider is closing...              module=hello
+INFO[2021-03-08 19:04:32.984] provider hello exit     
+```
+
+## Reading Config
+Support the following ways to read config, the priority from low to high is:
 * default Tag In Struct
 * System Environment Variable
 * .env File Environment Variable
 * Config File
 * Flag
 
-支持的配置文件格式：
+Supports file formats:
 * yaml、yml
 * json
 * hcl

@@ -8,8 +8,26 @@ import (
 	"github.com/recallsong/servicehub"
 )
 
-type subConfig struct {
-	Name string `file:"name" flag:"hello_name" default:"recallsong" desc:"name to show"`
+// define Represents the definition of provider and provides some information
+type define struct{}
+
+// Declare what services the provider provides
+func (d *define) Service() []string { return []string{"hello"} }
+
+// Declare which services the provider depends on
+func (d *define) Dependencies() []string { return []string{} }
+
+// Describe information about this provider
+func (d *define) Description() string { return "hello for example" }
+
+// Return an instance representing the configuration
+func (d *define) Config() interface{} { return &config{} }
+
+// Return a provider creator
+func (d *define) Creator() servicehub.Creator {
+	return func() servicehub.Provider {
+		return &provider{}
+	}
 }
 
 type config struct {
@@ -17,16 +35,8 @@ type config struct {
 	SubConfig subConfig `file:"sub"`
 }
 
-type define struct{}
-
-func (d *define) Service() []string      { return []string{"hello"} }
-func (d *define) Dependencies() []string { return []string{} }
-func (d *define) Description() string    { return "hello for example" }
-func (d *define) Config() interface{}    { return &config{} }
-func (d *define) Creator() servicehub.Creator {
-	return func() servicehub.Provider {
-		return &provider{}
-	}
+type subConfig struct {
+	Name string `file:"name" flag:"hello_name" default:"recallsong" desc:"name to show"`
 }
 
 type provider struct {
@@ -66,5 +76,5 @@ func init() {
 
 func main() {
 	hub := servicehub.New()
-	hub.Run("examples", os.Args...)
+	hub.Run("examples", "", os.Args...)
 }
