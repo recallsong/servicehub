@@ -9,50 +9,7 @@ import (
 	"github.com/recallsong/go-utils/config"
 )
 
-func (h *Hub) loadConfigWithArgs(file string, args ...string) (map[string]interface{}, error) {
-	cfg := make(map[string]interface{})
-	if len(args) > 0 {
-		args = args[1:]
-		var idx int
-		var arg string
-		for idx, arg = range args {
-			if !strings.HasPrefix(arg, "-") {
-				cfg[arg] = nil
-			} else {
-				break
-			}
-		}
-		args, num, idx := args[idx:], len(args[idx:]), 0
-		for ; idx < num; idx++ {
-			arg := args[idx]
-			if strings.HasPrefix(arg, "-") {
-				if arg == "-c" || arg == "--config" || arg == "-config" {
-					idx++
-					if idx < len(args) && len(args[idx]) > 0 {
-						file = args[idx]
-					}
-				} else if strings.HasPrefix(arg, "-c=") {
-					arg = arg[len("-c="):]
-					if len(arg) > 0 {
-						file = arg
-					}
-				} else if strings.HasPrefix(arg, "--config=") {
-					arg = arg[len("--config="):]
-					if len(arg) > 0 {
-						file = arg
-					}
-				} else if strings.HasPrefix(arg, "-config=") {
-					arg = arg[len("-config="):]
-					if len(arg) > 0 {
-						file = arg
-					}
-				}
-			}
-		}
-	}
-	if len(file) <= 0 {
-		return cfg, nil
-	}
+func (h *Hub) loadConfigWithArgs(file string, cfg map[string]interface{}) (map[string]interface{}, error) {
 	err := config.LoadToMap(file, cfg)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -63,7 +20,7 @@ func (h *Hub) loadConfigWithArgs(file string, args ...string) (map[string]interf
 			}
 			return cfg, nil
 		}
-		h.logger.Errorf("fail to load config: %s", err)
+		h.logger.Errorf("failed to load config: %s", err)
 		return nil, err
 	}
 	h.logger.Debugf("using config file: %s", file)
@@ -102,7 +59,6 @@ func (h *Hub) loadProviders(config map[string]interface{}) error {
 
 func (h *Hub) doLoadProviders(config map[string]interface{}, filter string) error {
 	for key, cfg := range config {
-		key = strings.ReplaceAll(key, "_", "-")
 		if key == filter {
 			continue
 		}
@@ -115,10 +71,11 @@ func (h *Hub) doLoadProviders(config map[string]interface{}, filter string) erro
 }
 
 func (h *Hub) addProvider(key string, cfg interface{}) error {
-	name := key
+	name, label := key, ""
 	idx := strings.Index(key, "@")
 	if idx > 0 {
 		name = key[0:idx]
+		label = key[idx+1:]
 	}
 	if cfg != nil {
 		if v, ok := cfg.(map[string]interface{}); ok {
@@ -142,6 +99,28 @@ func (h *Hub) addProvider(key string, cfg interface{}) error {
 		return fmt.Errorf("provider %s not exist", name)
 	}
 	provider := define.Creator()()
-	h.providersMap[name] = append(h.providersMap[name], &providerContext{h, key, name, cfg, provider, define})
+	pctx := &providerContext{
+		Context:  h.ctx,
+		hub:      h,
+		key:      key,
+		label:    label,
+		name:     name,
+		cfg:      cfg,
+		provider: provider,
+		define:   define,
+	}
+	if provider != nil {
+		value := reflect.ValueOf(provider)
+		typ := value.Type()
+		for typ.Kind() == reflect.Ptr {
+			value = value.Elem()
+			typ = value.Type()
+		}
+		if typ.Kind() == reflect.Struct {
+			pctx.structValue = value
+			pctx.structType = typ
+		}
+	}
+	h.providersMap[name] = append(h.providersMap[name], pctx)
 	return nil
 }

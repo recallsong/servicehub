@@ -1,0 +1,7 @@
+hello-provider:
+    name: "recallsong"
+
+example-dependency-provider:
+    prefix: ""
+example-dependency-provider@label:
+    prefix: "label-"

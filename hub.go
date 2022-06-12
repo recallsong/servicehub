@@ -1,36 +1,40 @@
 package servicehub
 
 import (
+	"bytes"
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/recallsong/go-utils/config"
-	"github.com/recallsong/go-utils/encoding/jsonx"
 	"github.com/recallsong/go-utils/errorx"
-	"github.com/recallsong/go-utils/logs"
-	"github.com/recallsong/go-utils/logs/golog"
 	"github.com/recallsong/go-utils/os/signalx"
 	graph "github.com/recallsong/servicehub/dependency-graph"
-	"github.com/recallsong/unmarshal"
-	unmarshalflag "github.com/recallsong/unmarshal/unmarshal-flag"
+	"github.com/recallsong/servicehub/logs"
+	"github.com/recallsong/servicehub/logs/logrusx"
 	"github.com/spf13/pflag"
 )
 
 // Hub .
 type Hub struct {
-	logger       logs.Logger
-	providersMap map[string][]*providerContext
-	providers    []*providerContext
-	servicesMap  map[string][]*providerContext
-	lock         sync.RWMutex
+	logger        logs.Logger
+	providersMap  map[string][]*providerContext
+	providers     []*providerContext
+	servicesMap   map[string][]*providerContext
+	servicesTypes map[reflect.Type][]*providerContext
+	lock          sync.RWMutex
 
 	started bool
+	ctx     context.Context
+	cancel  func()
 	wg      sync.WaitGroup
 
 	listeners []Listener
@@ -39,11 +43,12 @@ type Hub struct {
 // New .
 func New(options ...interface{}) *Hub {
 	hub := &Hub{}
+	hub.ctx, hub.cancel = context.WithCancel(context.Background())
 	for _, opt := range options {
 		processOptions(hub, opt)
 	}
 	if hub.logger == nil {
-		hub.logger = golog.New()
+		hub.logger = logrusx.New()
 	}
 	return hub
 }
@@ -51,16 +56,8 @@ func New(options ...interface{}) *Hub {
 // Init .
 func (h *Hub) Init(config map[string]interface{}, flags *pflag.FlagSet, args []string) (err error) {
 	defer func() {
-		// exp := recover()
-		// if exp != nil {
-		// 	if e, ok := exp.(error); ok {
-		// 		err = e
-		// 	} else {
-		// 		err = fmt.Errorf("%v", exp)
-		// 	}
-		// }
 		if err != nil {
-			h.logger.Errorf("fail to init service hub: %s", err)
+			h.logger.Errorf("failed to init service hub: %s", err)
 		}
 	}()
 	for i, l := 0, len(h.listeners); i < l; i++ {
@@ -76,7 +73,7 @@ func (h *Hub) Init(config map[string]interface{}, flags *pflag.FlagSet, args []s
 
 	depGraph, err := h.resolveDependency(h.providersMap)
 	if err != nil {
-		return fmt.Errorf("fail to resolve dependency: %s", err)
+		return fmt.Errorf("failed to resolve dependency: %s", err)
 	}
 
 	flags.BoolP("providers", "p", false, "print all providers supported")
@@ -84,12 +81,14 @@ func (h *Hub) Init(config map[string]interface{}, flags *pflag.FlagSet, args []s
 	for _, ctx := range h.providers {
 		err = ctx.BindConfig(flags)
 		if err != nil {
-			return fmt.Errorf("fail to bind config for provider %s: %s", ctx.name, err)
+			return fmt.Errorf("failed to bind config for provider %s: %w", ctx.name, err)
 		}
 	}
 	err = flags.Parse(args)
 	if err != nil {
-		return fmt.Errorf("fail to bind flags: %s", err)
+		fmt.Fprintf(os.Stderr, "Usage of %s:\n", "main")
+		flags.PrintDefaults()
+		return fmt.Errorf("failed to parse flags: %w", err)
 	}
 	if ok, err := flags.GetBool("providers"); err == nil && ok {
 		usage := Usage()
@@ -101,17 +100,19 @@ func (h *Hub) Init(config map[string]interface{}, flags *pflag.FlagSet, args []s
 		os.Exit(0)
 	}
 	for _, ctx := range h.providers {
+		h.logger.Infof("provider %s is initializing", ctx.key)
 		err = ctx.Init()
 		if err != nil {
 			return err
 		}
-		if len(ctx.Dependencies()) > 0 {
-			h.logger.Infof("provider %s (depends %v) initialized", ctx.name, ctx.Dependencies())
+		dependencies := ctx.dependencies()
+		if len(dependencies) > 0 {
+			h.logger.Infof("provider %s (depends %s) initialized", ctx.key, dependencies)
 		} else {
-			h.logger.Infof("provider %s initialized", ctx.name)
+			h.logger.Infof("provider %s initialized", ctx.key)
 		}
 	}
-	for i, l := 0, len(h.listeners); i < l; i++ {
+	for i := len(h.listeners) - 1; i >= 0; i-- {
 		err = h.listeners[i].AfterInitialization(h)
 		if err != nil {
 			return err
@@ -122,33 +123,46 @@ func (h *Hub) Init(config map[string]interface{}, flags *pflag.FlagSet, args []s
 
 func (h *Hub) resolveDependency(providersMap map[string][]*providerContext) (graph.Graph, error) {
 	services := map[string][]*providerContext{}
+	types := map[reflect.Type][]*providerContext{}
 	for _, p := range providersMap {
-		service := p[0].define.Service()
-		for _, s := range service {
+		d := p[0].define
+		var list []string
+		if ps, ok := d.(ProviderServices); ok {
+			list = ps.Services()
+		}
+		for _, s := range list {
 			if exist, ok := services[s]; ok {
 				return nil, fmt.Errorf("service %s conflict between %s and %s", s, exist[0].name, p[0].name)
 			}
 			services[s] = p
 		}
+		if ts, ok := d.(ServiceTypes); ok {
+			for _, t := range ts.Types() {
+				if exist, ok := types[t]; ok {
+					return nil, fmt.Errorf("service type %s conflict between %s and %s", t, exist[0].name, p[0].name)
+				}
+				types[t] = p
+			}
+		}
 	}
 	h.servicesMap = services
+	h.servicesTypes = types
 	var depGraph graph.Graph
 	for name, p := range providersMap {
-		depends := p[0].Dependencies()
 		providers := map[string]*providerContext{}
+		dependsServices, dependsProviders := p[0].Dependencies()
 	loop:
-		for _, service := range depends {
+		for _, service := range dependsServices {
 			name := service
-			var key string
+			var label string
 			idx := strings.Index(service, "@")
 			if idx > 0 {
-				key = service
-				name = service[0:idx]
+				name, label = service[0:idx], service[idx+1:]
 			}
 			if deps, ok := services[name]; ok {
-				if len(key) > 0 {
+				if len(label) > 0 {
 					for _, dep := range deps {
-						if dep.key == key {
+						if dep.label == label {
 							providers[dep.name] = dep
 							continue loop
 						}
@@ -158,11 +172,16 @@ func (h *Hub) resolveDependency(providersMap map[string][]*providerContext) (gra
 					continue loop
 				}
 			}
-			return nil, fmt.Errorf("miss provider of service %s", service)
+			return nil, fmt.Errorf("provider %s depends on service %s, but it not found", p[0].name, service)
 		}
 		node := graph.NewNode(name)
 		for dep := range providers {
 			node.Deps = append(node.Deps, dep)
+		}
+		for _, dep := range dependsProviders {
+			if _, ok := providers[dep]; !ok {
+				node.Deps = append(node.Deps, dep)
+			}
 		}
 		depGraph = append(depGraph, node)
 	}
@@ -182,57 +201,104 @@ func (h *Hub) resolveDependency(providersMap map[string][]*providerContext) (gra
 // StartWithSignal .
 func (h *Hub) StartWithSignal() error {
 	sigs := []os.Signal{syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT}
-	h.logger.Info("signals to quit:", sigs)
+	h.logger.Infof("signals to quit: %v", sigs)
 	return h.Start(signalx.Notify(sigs...))
 }
 
 // Start .
 func (h *Hub) Start(closer ...<-chan os.Signal) (err error) {
 	h.lock.Lock()
+	ctx := h.ctx
 	ch := make(chan error, len(h.providers))
 	var num int
 	for _, item := range h.providers {
+		key := item.key
+		if key != item.name {
+			key = fmt.Sprintf("%s (%s)", item.key, item.name)
+		}
 		if runner, ok := item.provider.(ProviderRunner); ok {
 			num++
 			h.wg.Add(1)
-			go func(key, name string, provider ProviderRunner) {
-				if key != name {
-					key = fmt.Sprintf("%s (%s)", key, name)
-				}
-				h.logger.Debugf("provider %s starting ...", key)
+			go func(key string, provider ProviderRunner) {
+				h.logger.Infof("provider %s starting ...", key)
 				err := provider.Start()
 				if err != nil {
-					h.logger.Errorf("fail to exit provider %s: %s", key, err)
+					h.logger.Errorf("failed to start provider %s: %s", key, err)
 				} else {
-					h.logger.Infof("provider %s exit", key)
+					h.logger.Infof("provider %s closed", key)
 				}
 				h.wg.Done()
 				ch <- err
-			}(item.key, item.name, runner)
+			}(key, runner)
+		}
+		if runner, ok := item.provider.(ProviderRunnerWithContext); ok {
+			num++
+			h.wg.Add(1)
+			go func(key string, provider ProviderRunnerWithContext) {
+				h.logger.Infof("provider %s running ...", key)
+				err := provider.Run(ctx)
+				if err != nil {
+					h.logger.Errorf("failed to run provider %s: %s", key, err)
+				} else {
+					h.logger.Infof("provider %s Run exit", key)
+				}
+				h.wg.Done()
+				ch <- err
+			}(key, runner)
+		}
+		for i, t := range item.tasks {
+			num++
+			h.wg.Add(1)
+			go func(key string, i int, t task) {
+				tname := t.name
+				if len(tname) <= 0 {
+					tname = strconv.Itoa(i + 1)
+				}
+				h.logger.Infof("provider %s task(%s) running ...", key, tname)
+				err := t.fn(ctx)
+				if err != nil {
+					h.logger.Errorf("failed to run provider %s task(%s): %s", key, tname, err)
+				} else {
+					h.logger.Infof("provider %s task(%s) exit", key, tname)
+				}
+				h.wg.Done()
+				ch <- err
+			}(key, i, t)
 		}
 	}
 	h.started = true
 	h.lock.Unlock()
 	runtime.Gosched()
 
+	for i, l := 0, len(h.listeners); i < l; i++ {
+		err = h.listeners[i].AfterStart(h)
+		if err != nil {
+			return err
+		}
+	}
+
+	closeCh, closed := make(chan struct{}), false
+	var elock sync.Mutex
 	for _, ch := range closer {
 		go func(ch <-chan os.Signal) {
 			select {
 			case <-ch:
-				fmt.Println()
-				wait := make(chan error)
-				go func() {
-					wait <- h.Close()
-				}()
-				select {
-				case <-time.After(30 * time.Second):
-					h.logger.Errorf("exit service manager timeout !")
+			case <-closeCh:
+			}
+			elock.Lock()
+			fmt.Println()
+			wait := make(chan error)
+			go func() {
+				wait <- h.Close()
+			}()
+			select {
+			case <-time.After(30 * time.Second):
+				h.logger.Errorf("exit service manager timeout !")
+				os.Exit(3)
+			case err := <-wait:
+				if err != nil {
+					h.logger.Errorf("failed to exit: %s", err)
 					os.Exit(1)
-				case err := <-wait:
-					if err != nil {
-						h.logger.Errorf("fail to exit: %s", err)
-						os.Exit(1)
-					}
 				}
 			}
 		}(ch)
@@ -240,14 +306,20 @@ func (h *Hub) Start(closer ...<-chan os.Signal) (err error) {
 	// wait to stop
 	errs := errorx.Errors{}
 	for i := 0; i < num; i++ {
-		select {
-		case err := <-ch:
-			if err != nil {
-				errs = append(errs, err)
+		err := <-ch
+		if err != nil {
+			errs = append(errs, err)
+			if !closed {
+				close(closeCh)
+				closed = true
 			}
 		}
 	}
-	return errs.MaybeUnwrap()
+	err = errs.MaybeUnwrap()
+	for i, l := 0, len(h.listeners); i < l; i++ {
+		err = h.listeners[i].BeforeExit(h, err)
+	}
+	return err
 }
 
 // Close .
@@ -266,228 +338,204 @@ func (h *Hub) Close() error {
 			}
 		}
 	}
+	h.cancel()
 	h.wg.Wait()
 	h.started = false
+	h.ctx, h.cancel = context.WithCancel(context.Background())
 	h.lock.Unlock()
 	return errs.MaybeUnwrap()
 }
 
-type providerContext struct {
-	hub      *Hub
-	key      string
-	name     string
-	cfg      interface{}
-	provider Provider
-	define   ProviderDefine
-}
-
-var loggerType = reflect.TypeOf((*logs.Logger)(nil)).Elem()
-
-func (c *providerContext) BindConfig(flags *pflag.FlagSet) (err error) {
-	if creator, ok := c.define.(ConfigCreator); ok {
-		cfg := creator.Config()
-		err = unmarshal.BindDefault(cfg)
-		if err != nil {
-			return err
-		}
-		if c.cfg != nil {
-			err = config.ConvertData(c.cfg, cfg, "file")
-			if err != nil {
-				return err
-			}
-		}
-		err = unmarshal.BindEnv(cfg)
-		if err != nil {
-			return err
-		}
-		err = unmarshalflag.BindFlag(flags, cfg)
-		if err != nil {
-			return err
-		}
-		c.cfg = cfg
-	}
-	return nil
-}
-
-func (c *providerContext) Init() (err error) {
-	value := reflect.ValueOf(c.provider)
-	typ := value.Type()
-	if typ.Kind() == reflect.Ptr {
-		for typ.Kind() == reflect.Ptr {
-			value = value.Elem()
-			typ = value.Type()
-		}
-		var (
-			cfgValue *reflect.Value
-			cfgType  reflect.Type
-		)
-		if c.cfg != nil {
-			value := reflect.ValueOf(c.cfg)
-			cfgValue = &value
-			cfgType = cfgValue.Type()
-		}
-		if typ.Kind() == reflect.Struct {
-			fields := typ.NumField()
-			for i := 0; i < fields; i++ {
-				field := typ.Field(i)
-				if field.Type == loggerType {
-					logger := c.Logger()
-					value.Field(i).Set(reflect.ValueOf(logger))
-				}
-				if cfgValue != nil && field.Type == cfgType {
-					value.Field(i).Set(*cfgValue)
-				}
-			}
+// ForeachServices .
+func (h *Hub) ForeachServices(fn func(service string) bool) {
+	for key := range h.servicesMap {
+		if !fn(key) {
+			return
 		}
 	}
-	if c.cfg != nil {
-		key := c.key
-		if key != c.name {
-			key = fmt.Sprintf("%s (%s)", key, c.name)
-		}
-		if os.Getenv("LOG_LEVEL") == "debug" {
-			fmt.Printf("provider %s config: \n%s\n", key, jsonx.MarshalAndIndent(c.cfg))
-		}
-		// c.hub.logger.Debugf("provider %s config: \n%s", key, jsonx.MarshalAndIndent(c.cfg))
-	}
-
-	if initializer, ok := c.provider.(ProviderInitializer); ok {
-		err = initializer.Init(c)
-		if err != nil {
-			return fmt.Errorf("fail to Init provider %s: %s", c.name, err)
-		}
-	}
-	return nil
 }
 
-// Define .
-func (c *providerContext) Define() ProviderDefine {
-	return c.define
-}
-
-// Define .
-func (c *providerContext) Dependencies() []string {
-	if deps, ok := c.define.(ServiceDependencies); ok {
-		return deps.Dependencies()
-	}
-	return nil
-}
-
-// Hub .
-func (c *providerContext) Hub() *Hub {
-	return c.hub
-}
-
-// Logger .
-func (c *providerContext) Logger() logs.Logger {
-	if c.hub.logger == nil {
-		return nil
-	}
-	return c.hub.logger.Sub(c.name)
-}
-
-// Config .
-func (c *providerContext) Config() interface{} {
-	return c.cfg
-}
-
-// Provider .
-func (c *providerContext) Service(name string, options ...interface{}) interface{} {
-	return c.hub.getService(c.name, name, options...)
+// IsServiceExist .
+func (h *Hub) IsServiceExist(service string) bool {
+	return len(h.servicesMap[service]) > 0
 }
 
 // Service .
 func (h *Hub) Service(name string, options ...interface{}) interface{} {
-	return h.getService("", name, options...)
+	return h.getService(newDependencyContext(
+		name,
+		"",
+		nil,
+		reflect.StructTag(""),
+	), options...)
 }
 
-// Service .
-func (h *Hub) getService(operator, name string, options ...interface{}) interface{} {
-	var key string
-	idx := strings.Index(name, "@")
-	if idx > 0 {
-		key = name
-		name = name[0:idx]
-	}
-	if providers, ok := h.servicesMap[name]; ok {
-		if len(providers) > 0 {
-			var pc *providerContext
-			if len(key) > 0 {
-				for _, item := range providers {
-					if item.key == key {
-						pc = item
-						break
+func (h *Hub) getService(dc DependencyContext, options ...interface{}) (instance interface{}) {
+	var pc *providerContext
+	if len(dc.Service()) > 0 {
+		if providers, ok := h.servicesMap[dc.Service()]; ok {
+			if len(providers) > 0 {
+				if len(dc.Label()) > 0 {
+					for _, item := range providers {
+						if item.label == dc.Label() {
+							pc = item
+							break
+						}
+					}
+				} else {
+					for _, item := range providers {
+						if item.key == item.name {
+							pc = item
+							break
+						}
+					}
+					if pc == nil && len(providers) > 0 {
+						pc = providers[0]
 					}
 				}
-			} else {
-				for _, item := range providers {
-					if item.key == item.name {
-						pc = item
-						break
-					}
-				}
-				if pc == nil && len(providers) > 0 {
-					pc = providers[0]
-				}
 			}
-			if pc == nil {
-				return nil
-			}
-			provider := pc.provider
-			if prod, ok := provider.(DependencyProvider); ok {
-				return prod.Provide(operator, options...)
-			}
-			return provider
 		}
+	} else if dc.Type() != nil {
+		providers := h.servicesTypes[dc.Type()]
+		for _, item := range providers {
+			if item.key == item.name {
+				pc = item
+				break
+			}
+		}
+		if pc == nil && len(providers) > 0 {
+			pc = providers[0]
+		}
+	}
+	if pc != nil {
+		provider := pc.provider
+		if prod, ok := provider.(DependencyProvider); ok {
+			return prod.Provide(dc, options...)
+		}
+		return provider
 	}
 	return nil
 }
 
-// Run .
-func (h *Hub) Run(name, cfgfile string, args ...string) {
-	h.RunWithDefault(name, cfgfile, nil, args...)
+// Provider .
+func (h *Hub) Provider(name string) interface{} {
+	var label string
+	idx := strings.Index(name, "@")
+	if idx > 0 {
+		label = name[idx+1:]
+		name = name[0:idx]
+	}
+	ps := h.providersMap[name]
+	if len(label) > 0 {
+		for _, p := range ps {
+			if p.label == label {
+				return p.provider
+			}
+		}
+	} else if len(ps) > 0 {
+		return ps[0].provider
+	}
+	return nil
 }
 
-// RunWithDefault .
-func (h *Hub) RunWithDefault(name, cfgfile string, defcfg map[string]interface{}, args ...string) {
+// RunOptions .
+type RunOptions struct {
+	Name       string
+	ConfigFile string
+	Content    interface{}
+	Format     string
+	Args       []string
+}
+
+// RunWithOptions .
+func (h *Hub) RunWithOptions(opts *RunOptions) {
+	name := opts.Name
 	if len(name) <= 0 {
-		name = getAppName(args...)
+		name = getAppName(opts.Args...)
 	}
 	config.LoadEnvFile()
 
 	var err error
+	var start bool
 	defer func() {
+		if !start {
+			for i, l := 0, len(h.listeners); i < l; i++ {
+				err = h.listeners[i].BeforeExit(h, err)
+			}
+		}
 		if err != nil {
 			os.Exit(1)
 		}
 	}()
 
-	if len(cfgfile) <= 0 && len(defcfg) <= 0 {
-		cfgfile = name + ".yaml"
+	format := "yaml"
+	if len(opts.Format) > 0 {
+		format = opts.Format
 	}
-	cfg, err := h.loadConfigWithArgs(cfgfile, args...)
-	if err != nil {
-		return
-	}
-	if defcfg != nil {
-		for k, v := range defcfg {
-			if _, ok := cfg[k]; !ok {
-				cfg[k] = v
+	cfgmap := make(map[string]interface{})
+	if opts.Content != nil {
+		var reader io.Reader
+		switch val := opts.Content.(type) {
+		case map[string]interface{}:
+			cfgmap = val
+		case string:
+			reader = strings.NewReader(val)
+		case []byte:
+			reader = bytes.NewReader(val)
+		default:
+			err = fmt.Errorf("invalid config content type")
+			h.logger.Error(err)
+			return
+		}
+		if reader != nil {
+			err = config.UnmarshalToMap(reader, format, cfgmap)
+			if err != nil {
+				h.logger.Errorf("failed to parse %s config: %s", format, err)
+				return
 			}
 		}
 	}
 
+	cfgfile := opts.ConfigFile
+	if len(cfgmap) <= 0 && len(opts.ConfigFile) <= 0 {
+		cfgfile = name + "." + format
+	}
+
 	flags := pflag.NewFlagSet(name, pflag.ExitOnError)
 	flags.StringP("config", "c", cfgfile, "config file to load providers")
-	err = h.Init(cfg, flags, args)
+	flags.Parse(opts.Args)
+	cfgfile, _ = flags.GetString("config")
+
+	cfgmap, err = h.loadConfigWithArgs(cfgfile, cfgmap)
+	if err != nil {
+		return
+	}
+	err = h.Init(cfgmap, flags, opts.Args)
 	if err != nil {
 		return
 	}
 	defer h.Close()
+	start = true
 	err = h.StartWithSignal()
 	if err != nil {
 		return
 	}
+}
+
+// Run .
+func (h *Hub) Run(name, cfgfile string, args ...string) {
+	h.RunWithOptions(&RunOptions{
+		Name:       name,
+		ConfigFile: cfgfile,
+		Args:       args,
+	})
+}
+
+// Run .
+func Run(opts *RunOptions) *Hub {
+	hub := New()
+	hub.RunWithOptions(opts)
+	return hub
 }
 
 func getAppName(args ...string) string {

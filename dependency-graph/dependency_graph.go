@@ -1,6 +1,6 @@
 package graph
 
-// http://dnaeon.github.io/dependency-graph-resolution-algorithm-in-go/
+// reference http://dnaeon.github.io/dependency-graph-resolution-algorithm-in-go/
 
 import (
 	"errors"
