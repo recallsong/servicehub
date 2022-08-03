@@ -88,7 +88,7 @@ func (h *Hub) Init(config map[string]interface{}, flags *pflag.FlagSet, args []s
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Usage of %s:\n", "main")
 		flags.PrintDefaults()
-		return fmt.Errorf("failed to parse flags: %w", err)
+		return err
 	}
 	if ok, err := flags.GetBool("providers"); err == nil && ok {
 		usage := Usage()
@@ -501,11 +501,17 @@ func (h *Hub) RunWithOptions(opts *RunOptions) {
 		cfgfile = name + "." + format
 	}
 
-	flags := pflag.NewFlagSet(name, pflag.ExitOnError)
+	flags := pflag.NewFlagSet(name, pflag.ContinueOnError)
 	flags.StringP("config", "c", cfgfile, "config file to load providers")
+	flags.String("log.level", "", "setup log level")
 	flags.Parse(opts.Args)
-	cfgfile, _ = flags.GetString("config")
 
+	level, _ := flags.GetString("log.level")
+	if len(level) > 0 {
+		h.logger.SetLevel(level)
+	}
+
+	cfgfile, _ = flags.GetString("config")
 	cfgmap, err = h.loadConfigWithArgs(cfgfile, cfgmap)
 	if err != nil {
 		return
