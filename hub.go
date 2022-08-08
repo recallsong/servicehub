@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"strconv"
@@ -32,10 +33,11 @@ type Hub struct {
 	servicesTypes map[reflect.Type][]*providerContext
 	lock          sync.RWMutex
 
-	started bool
-	ctx     context.Context
-	cancel  func()
-	wg      sync.WaitGroup
+	started     bool
+	ctx         context.Context
+	cancel      func()
+	wg          sync.WaitGroup
+	exitTimeout time.Duration
 
 	listeners []Listener
 }
@@ -291,11 +293,21 @@ func (h *Hub) Start(closer ...<-chan os.Signal) (err error) {
 			go func() {
 				wait <- h.Close()
 			}()
-			select {
-			case <-time.After(30 * time.Second):
-				h.logger.Errorf("exit service manager timeout !")
-				os.Exit(3)
-			case err := <-wait:
+
+			timeout := h.exitTimeout
+			if timeout > 0 {
+				select {
+				case <-time.After(timeout):
+					h.logger.Errorf("exit service manager timeout !")
+					os.Exit(3)
+				case err := <-wait:
+					if err != nil {
+						h.logger.Errorf("failed to exit: %s", err)
+						os.Exit(1)
+					}
+				}
+			} else {
+				err := <-wait
 				if err != nil {
 					h.logger.Errorf("failed to exit: %s", err)
 					os.Exit(1)
@@ -504,6 +516,7 @@ func (h *Hub) RunWithOptions(opts *RunOptions) {
 	flags := pflag.NewFlagSet(name, pflag.ContinueOnError)
 	flags.StringP("config", "c", cfgfile, "config file to load providers")
 	flags.String("log.level", "", "setup log level")
+	flags.DurationVar(&h.exitTimeout, "exit.timeout", 30*time.Second, "setup exit level")
 	flags.Parse(opts.Args)
 
 	level, _ := flags.GetString("log.level")
@@ -512,9 +525,11 @@ func (h *Hub) RunWithOptions(opts *RunOptions) {
 	}
 
 	cfgfile, _ = flags.GetString("config")
-	cfgmap, err = h.loadConfigWithArgs(cfgfile, cfgmap)
-	if err != nil {
-		return
+	if len(cfgfile) > 0 {
+		cfgmap, err = h.loadConfig(cfgfile, cfgmap)
+		if err != nil {
+			return
+		}
 	}
 	err = h.Init(cfgmap, flags, opts.Args)
 	if err != nil {
@@ -545,13 +560,8 @@ func Run(opts *RunOptions) *Hub {
 }
 
 func getAppName(args ...string) string {
-	if len(args) <= 0 {
+	if len(os.Args) <= 0 {
 		return ""
 	}
-	name := args[0]
-	idx := strings.LastIndex(os.Args[0], "/")
-	if idx >= 0 {
-		return name[idx+1:]
-	}
-	return ""
+	return filepath.Base(os.Args[0])
 }

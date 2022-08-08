@@ -91,10 +91,6 @@ func (c *providerContext) Init() (err error) {
 				value.Field(i).Set(*cfgValue)
 			}
 
-			if obj, ok := globalServiceTypes[field.Type]; ok {
-				value.Field(i).Set(obj)
-			}
-
 			service := field.Tag.Get("service")
 			if len(service) <= 0 {
 				service = field.Tag.Get("autowired")
@@ -102,6 +98,7 @@ func (c *providerContext) Init() (err error) {
 			if service == "-" {
 				continue
 			}
+
 			dc := newDependencyContext(
 				service,
 				c.name,

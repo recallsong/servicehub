@@ -9,7 +9,7 @@ import (
 	"github.com/recallsong/go-utils/config"
 )
 
-func (h *Hub) loadConfigWithArgs(file string, cfg map[string]interface{}) (map[string]interface{}, error) {
+func (h *Hub) loadConfig(file string, cfg map[string]interface{}) (map[string]interface{}, error) {
 	err := config.LoadToMap(file, cfg)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -41,7 +41,7 @@ func (h *Hub) loadProviders(config map[string]interface{}) error {
 				if cfg, ok := item.(map[string]interface{}); ok {
 					err = h.addProvider("", cfg)
 					if err != nil {
-						return nil
+						return err
 					}
 				} else {
 					return fmt.Errorf("invalid provider config type: %v", reflect.TypeOf(cfg))
@@ -52,6 +52,16 @@ func (h *Hub) loadProviders(config map[string]interface{}) error {
 			if err != nil {
 				return err
 			}
+		}
+	}
+	for name := range globalProviders {
+		if _, ok := config[name]; ok {
+			h.logger.Warnf("provider %q conflict with global provider", name)
+			continue
+		}
+		err = h.addProvider(name, map[string]interface{}{})
+		if err != nil {
+			return err
 		}
 	}
 	return nil
@@ -96,7 +106,10 @@ func (h *Hub) addProvider(key string, cfg interface{}) error {
 	}
 	define, ok := serviceProviders[name]
 	if !ok {
-		return fmt.Errorf("provider %s not exist", name)
+		define, ok = globalProviders[name]
+		if !ok {
+			return fmt.Errorf("provider %s not exist", name)
+		}
 	}
 	provider := define.Creator()()
 	pctx := &providerContext{

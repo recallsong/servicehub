@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"reflect"
 
 	"github.com/recallsong/servicehub"
 	"github.com/recallsong/servicehub/logs"
@@ -21,7 +20,7 @@ type ExampleService struct {
 type provider struct {
 	Cfg     *config
 	Log     logs.Logger
-	Service *ExampleService
+	Service *ExampleService `autowired:"test"`
 }
 
 func (p *provider) Run(ctx context.Context) error {
@@ -30,9 +29,14 @@ func (p *provider) Run(ctx context.Context) error {
 }
 
 func init() {
-	servicehub.RegisterService(&ExampleService{
-		Name: "test",
-	}, "", reflect.TypeOf((*ExampleService)(nil)))
+	servicehub.RegisterGlobalSpec("test-p", &servicehub.Spec{
+		Services: []string{"test"},
+		Creator: func() servicehub.Provider {
+			return &ExampleService{
+				Name: "testxxxx",
+			}
+		},
+	})
 
 	servicehub.Register("hello-provider", &servicehub.Spec{
 		Services:    []string{"hello"},
