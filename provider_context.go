@@ -10,11 +10,10 @@ import (
 
 	"github.com/recallsong/go-utils/config"
 	"github.com/recallsong/go-utils/encoding/jsonx"
+	"github.com/recallsong/servicehub/logs"
 	"github.com/recallsong/unmarshal"
 	unmarshalflag "github.com/recallsong/unmarshal/unmarshal-flag"
 	"github.com/spf13/pflag"
-
-	"github.com/recallsong/servicehub/logs"
 )
 
 type providerContext struct {
@@ -102,6 +101,7 @@ func (c *providerContext) Init() (err error) {
 			dc := newDependencyContext(
 				service,
 				c.name,
+				c.label,
 				field.Type,
 				field.Tag,
 			)
@@ -249,6 +249,7 @@ func (c *providerContext) Service(name string, options ...interface{}) interface
 	return c.hub.getService(newDependencyContext(
 		name,
 		c.name,
+		c.label,
 		nil,
 		reflect.StructTag(""),
 	), options...)
@@ -295,12 +296,13 @@ type task struct {
 
 // dependencyContext .
 type dependencyContext struct {
-	typ     reflect.Type
-	tags    reflect.StructTag
-	service string
-	key     string
-	label   string
-	caller  string
+	typ         reflect.Type
+	tags        reflect.StructTag
+	service     string
+	key         string
+	label       string
+	caller      string
+	callerLabel string
 }
 
 func (dc *dependencyContext) Type() reflect.Type      { return dc.typ }
@@ -309,14 +311,16 @@ func (dc *dependencyContext) Service() string         { return dc.service }
 func (dc *dependencyContext) Key() string             { return dc.key }
 func (dc *dependencyContext) Label() string           { return dc.label }
 func (dc *dependencyContext) Caller() string          { return dc.caller }
+func (dc *dependencyContext) CallerLabel() string     { return dc.callerLabel }
 
-func newDependencyContext(service, caller string, typ reflect.Type, tags reflect.StructTag) *dependencyContext {
+func newDependencyContext(service, caller, callerLabel string, typ reflect.Type, tags reflect.StructTag) *dependencyContext {
 	dc := &dependencyContext{
-		typ:     typ,
-		tags:    tags,
-		key:     service,
-		service: service,
-		caller:  caller,
+		typ:         typ,
+		tags:        tags,
+		key:         service,
+		service:     service,
+		caller:      caller,
+		callerLabel: callerLabel,
 	}
 	idx := strings.Index(service, "@")
 	if idx > 0 {

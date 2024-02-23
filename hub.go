@@ -377,6 +377,7 @@ func (h *Hub) Service(name string, options ...interface{}) interface{} {
 	return h.getService(newDependencyContext(
 		name,
 		"",
+		"",
 		nil,
 		reflect.StructTag(""),
 	), options...)
@@ -387,18 +388,31 @@ func (h *Hub) getService(dc DependencyContext, options ...interface{}) (instance
 	if len(dc.Service()) > 0 {
 		if providers, ok := h.servicesMap[dc.Service()]; ok {
 			if len(providers) > 0 {
-				if len(dc.Label()) > 0 {
+				if label := dc.Label(); len(label) > 0 {
 					for _, item := range providers {
-						if item.label == dc.Label() {
+						if item.label == label {
 							pc = item
 							break
 						}
 					}
 				} else {
-					for _, item := range providers {
-						if item.key == item.name {
-							pc = item
-							break
+					follow, _ := strconv.ParseBool(dc.Tags().Get("follow-label"))
+					if follow {
+						if callerLabel := dc.CallerLabel(); len(callerLabel) > 0 {
+							for _, item := range providers {
+								if item.label == callerLabel {
+									pc = item
+									break
+								}
+							}
+						}
+					}
+					if pc == nil {
+						for _, item := range providers {
+							if len(item.label) <= 0 {
+								pc = item
+								break
+							}
 						}
 					}
 					if pc == nil && len(providers) > 0 {
@@ -409,10 +423,23 @@ func (h *Hub) getService(dc DependencyContext, options ...interface{}) (instance
 		}
 	} else if dc.Type() != nil {
 		providers := h.servicesTypes[dc.Type()]
-		for _, item := range providers {
-			if item.key == item.name {
-				pc = item
-				break
+		follow, _ := strconv.ParseBool(dc.Tags().Get("follow-label"))
+		if follow {
+			if callerLabel := dc.CallerLabel(); len(callerLabel) > 0 {
+				for _, item := range providers {
+					if item.label == callerLabel {
+						pc = item
+						break
+					}
+				}
+			}
+		}
+		if pc == nil {
+			for _, item := range providers {
+				if len(item.label) <= 0 {
+					pc = item
+					break
+				}
 			}
 		}
 		if pc == nil && len(providers) > 0 {

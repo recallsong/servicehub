@@ -102,6 +102,7 @@ type DependencyContext interface {
 	Key() string
 	Label() string
 	Caller() string
+	CallerLabel() string
 }
 
 // DependencyProvider .
