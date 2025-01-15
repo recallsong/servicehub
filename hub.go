@@ -213,6 +213,7 @@ func (h *Hub) Start(closer ...<-chan os.Signal) (err error) {
 	ctx := h.ctx
 	ch := make(chan error, len(h.providers))
 	var num int
+	var allTasks sync.Map
 	for _, item := range h.providers {
 		key := item.key
 		if key != item.name {
@@ -222,6 +223,9 @@ func (h *Hub) Start(closer ...<-chan os.Signal) (err error) {
 			num++
 			h.wg.Add(1)
 			go func(key string, provider ProviderRunner) {
+				taskKey := key + ".Start+Close"
+				allTasks.Store(taskKey, true)
+				defer allTasks.Delete(taskKey)
 				h.logger.Infof("provider %s starting ...", key)
 				err := provider.Start()
 				if err != nil {
@@ -237,6 +241,9 @@ func (h *Hub) Start(closer ...<-chan os.Signal) (err error) {
 			num++
 			h.wg.Add(1)
 			go func(key string, provider ProviderRunnerWithContext) {
+				taskKey := key + ".Run"
+				allTasks.Store(taskKey, true)
+				defer allTasks.Delete(taskKey)
 				h.logger.Infof("provider %s running ...", key)
 				err := provider.Run(ctx)
 				if err != nil {
@@ -256,6 +263,9 @@ func (h *Hub) Start(closer ...<-chan os.Signal) (err error) {
 				if len(tname) <= 0 {
 					tname = strconv.Itoa(i + 1)
 				}
+				taskKey := key + ".Task(" + tname + ")"
+				allTasks.Store(taskKey, true)
+				defer allTasks.Delete(taskKey)
 				h.logger.Infof("provider %s task(%s) running ...", key, tname)
 				err := t.fn(ctx)
 				if err != nil {
@@ -298,6 +308,14 @@ func (h *Hub) Start(closer ...<-chan os.Signal) (err error) {
 			if timeout > 0 {
 				select {
 				case <-time.After(timeout):
+					var keys []string
+					allTasks.Range(func(key, value interface{}) bool {
+						keys = append(keys, key.(string))
+						return true
+					})
+					if len(keys) > 0 {
+						h.logger.Errorf("[%s] exit timeout !", strings.Join(keys, ","))
+					}
 					h.logger.Errorf("exit service manager timeout !")
 					os.Exit(3)
 				case err := <-wait:
