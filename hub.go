@@ -103,15 +103,16 @@ func (h *Hub) Init(config map[string]interface{}, flags *pflag.FlagSet, args []s
 	}
 	for _, ctx := range h.providers {
 		h.logger.Infof("provider %s is initializing", ctx.key)
+		now := time.Now()
 		err = ctx.Init()
 		if err != nil {
 			return err
 		}
 		dependencies := ctx.dependencies()
 		if len(dependencies) > 0 {
-			h.logger.Infof("provider %s (depends %s) initialized", ctx.key, dependencies)
+			h.logger.Infof("provider %s (depends %s) initialized, took %s", ctx.key, dependencies, time.Since(now))
 		} else {
-			h.logger.Infof("provider %s initialized", ctx.key)
+			h.logger.Infof("provider %s initialized, took %s", ctx.key, time.Since(now))
 		}
 	}
 	for i := len(h.listeners) - 1; i >= 0; i-- {
